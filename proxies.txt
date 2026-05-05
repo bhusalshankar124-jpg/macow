@@ -1,0 +1,13 @@
+# Add your proxies here, one per line.
+# Supported formats: socks5://user:pass@host:port or http://user:pass@host:port
+
+31.59.20.176:6754:hxxqstat:i7j40in5yymr
+198.23.239.134:6540:hxxqstat:i7j40in5yymr
+45.38.107.97:6014:hxxqstat:i7j40in5yymr
+107.172.163.27:6543:hxxqstat:i7j40in5yymr
+198.105.121.200:6462:hxxqstat:i7j40in5yymr
+216.10.27.159:6837:hxxqstat:i7j40in5yymr
+142.111.67.146:5611:hxxqstat:i7j40in5yymr
+191.96.254.138:6185:hxxqstat:i7j40in5yymr
+31.58.9.4:6077:hxxqstat:i7j40in5yymr
+23.26.71.145:5628:hxxqstat:i7j40in5yymr
