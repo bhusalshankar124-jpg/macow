@@ -17,6 +17,7 @@ const fs = require('fs');
 const path = require('path');
 const logger = require('../utils/logger');
 const botManager = require('../minecraft/botManager');
+const { buildPanelEmbeds } = require('./commands/statuspanel');
 
 class DiscordBot {
   constructor() {
@@ -31,6 +32,7 @@ class DiscordBot {
     this.commands = new Collection();
     this.feedChannel = null;
     this.reconnectAttempts = 0;
+    this.panelInterval = null;
   }
 
   /**
@@ -50,18 +52,38 @@ class DiscordBot {
   }
 
   /**
-   * Registers slash commands with Discord API.
+   * Registers slash commands with Discord API (guild-specific for instant updates).
    */
   async registerCommands() {
     const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
     const commandData = this.commands.map((cmd) => cmd.data.toJSON());
 
     try {
-      logger.info(`Registering ${commandData.length} slash command(s)...`);
-      await rest.put(Routes.applicationCommands(process.env.DISCORD_CLIENT_ID), {
-        body: commandData,
-      });
-      logger.success(`Successfully registered ${commandData.length} slash command(s)!`);
+      // Get guild ID from feed channel or first available guild
+      let guildId = null;
+      if (this.feedChannel && this.feedChannel.guild) {
+        guildId = this.feedChannel.guild.id;
+      } else {
+        // Fall back to first guild the bot is in
+        const firstGuild = this.client.guilds.cache.first();
+        if (firstGuild) guildId = firstGuild.id;
+      }
+
+      if (guildId) {
+        logger.info(`Registering ${commandData.length} slash command(s) to guild ${guildId}...`);
+        await rest.put(
+          Routes.applicationGuildCommands(process.env.DISCORD_CLIENT_ID, guildId),
+          { body: commandData }
+        );
+        logger.success(`Successfully registered ${commandData.length} slash command(s) (guild — instant)!`);
+      } else {
+        // Fallback to global if no guild found
+        logger.info(`Registering ${commandData.length} slash command(s) globally...`);
+        await rest.put(Routes.applicationCommands(process.env.DISCORD_CLIENT_ID), {
+          body: commandData,
+        });
+        logger.success(`Successfully registered ${commandData.length} slash command(s) (global — may take up to 1hr)!`);
+      }
     } catch (err) {
       logger.error(`Failed to register commands: ${err.message}`);
     }
@@ -90,6 +112,12 @@ class DiscordBot {
 
       // Wire up Minecraft → Discord callbacks
       this.setupMinecraftCallbacks();
+
+      // Register commands (guild-specific for instant updates)
+      await this.registerCommands();
+
+      // Start status panel auto-updater (every 5 minutes)
+      this.startPanelUpdater();
     });
 
     // Handle Discord reconnection events
@@ -307,6 +335,78 @@ class DiscordBot {
   }
 
   /**
+   * Starts the status panel auto-updater.
+   * Finds the panel channel by name and updates it every 5 minutes.
+   * If the channel exists but has no bot message, sends a new one.
+   */
+  startPanelUpdater() {
+    const PANEL_UPDATE_INTERVAL = 5 * 60 * 1000; // 5 minutes
+
+    if (this.panelInterval) {
+      clearInterval(this.panelInterval);
+    }
+
+    // Track the message ID so we can edit it next time
+    let panelMessageId = null;
+
+    const updatePanel = async () => {
+      try {
+        // Find the panel channel by name in all guilds
+        let panelChannel = null;
+        for (const [, guild] of this.client.guilds.cache) {
+          const found = guild.channels.cache.find(
+            (ch) => ch.type === 0 && ch.name.includes('status-panel')
+          );
+          if (found) {
+            panelChannel = found;
+            break;
+          }
+        }
+
+        if (!panelChannel) return; // No panel channel exists yet
+
+        const embeds = buildPanelEmbeds();
+
+        // Try to edit existing message
+        if (panelMessageId) {
+          const msg = await panelChannel.messages.fetch(panelMessageId).catch(() => null);
+          if (msg) {
+            await msg.edit({ embeds });
+            return;
+          }
+          // Message was deleted, fall through to send a new one
+          panelMessageId = null;
+        }
+
+        // No tracked message — find the bot's last message in the channel
+        if (!panelMessageId) {
+          const messages = await panelChannel.messages.fetch({ limit: 10 }).catch(() => null);
+          if (messages) {
+            const botMsg = messages.find((m) => m.author.id === this.client.user.id);
+            if (botMsg) {
+              panelMessageId = botMsg.id;
+              await botMsg.edit({ embeds });
+              return;
+            }
+          }
+        }
+
+        // No existing message found — send a new one
+        const newMsg = await panelChannel.send({ embeds });
+        panelMessageId = newMsg.id;
+      } catch (err) {
+        logger.error(`Panel updater error: ${err.message}`);
+      }
+    };
+
+    // Run immediately on startup, then every 5 minutes
+    setTimeout(updatePanel, 10000); // 10s delay to let bots connect
+    this.panelInterval = setInterval(updatePanel, PANEL_UPDATE_INTERVAL);
+
+    logger.info('Status panel auto-updater started (every 5 minutes)');
+  }
+
+  /**
    * Sets up connection health monitoring and automatic recovery.
    */
   setupConnectionHealth() {
@@ -418,8 +518,6 @@ class DiscordBot {
 
     try {
       await this.client.login(process.env.DISCORD_TOKEN);
-      // Register commands after login
-      await this.registerCommands();
     } catch (err) {
       logger.error(`Failed to start Discord bot: ${err.message}`);
       throw err;

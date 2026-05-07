@@ -24,9 +24,38 @@ class BotManager {
   }
 
   /**
-   * Loads proxies from proxies.txt
+   * Formats a raw proxy string into a URL format.
+   * Supports: host:port:user:pass, host:port, or full URL (socks5://..., http://...)
+   */
+  formatProxy(line) {
+    if (!line.includes('://')) {
+      const parts = line.split(':');
+      if (parts.length === 4) {
+        return `http://${parts[2]}:${parts[3]}@${parts[0]}:${parts[1]}`;
+      } else if (parts.length === 2) {
+        return `http://${parts[0]}:${parts[1]}`;
+      }
+    }
+    return line;
+  }
+
+  /**
+   * Loads proxies from PROXIES env var first, then falls back to proxies.txt.
+   * The PROXIES env var should be semicolon-separated.
    */
   loadProxies() {
+    // 1. Try PROXIES env var first (semicolon-separated)
+    if (process.env.PROXIES && process.env.PROXIES.trim().length > 0) {
+      this.proxies = process.env.PROXIES
+        .split(';')
+        .map(p => p.trim())
+        .filter(p => p.length > 0)
+        .map(p => this.formatProxy(p));
+      logger.info(`Loaded ${this.proxies.length} proxies from PROXIES env var`);
+      return;
+    }
+
+    // 2. Fall back to proxies.txt
     const proxiesPath = path.join(process.cwd(), 'proxies.txt');
     if (fs.existsSync(proxiesPath)) {
       try {
@@ -34,23 +63,79 @@ class BotManager {
         this.proxies = raw.split('\n')
           .map(line => line.trim())
           .filter(line => line.length > 0 && !line.startsWith('#'))
-          .map(line => {
-            // Auto-format host:port:user:pass to http://user:pass@host:port if no protocol is specified
-            if (!line.includes('://')) {
-              const parts = line.split(':');
-              if (parts.length === 4) {
-                return `http://${parts[2]}:${parts[3]}@${parts[0]}:${parts[1]}`;
-              } else if (parts.length === 2) {
-                return `http://${parts[0]}:${parts[1]}`;
-              }
-            }
-            return line;
-          });
+          .map(line => this.formatProxy(line));
         logger.info(`Loaded ${this.proxies.length} proxies from proxies.txt`);
       } catch (err) {
         logger.error(`Failed to parse proxies.txt: ${err.message}`);
       }
     }
+  }
+
+  /**
+   * Adds a proxy to the list (appended at the end).
+   * @param {string} proxyStr - Raw proxy string
+   * @returns {string} result message
+   */
+  addProxy(proxyStr) {
+    const formatted = this.formatProxy(proxyStr.trim());
+    this.proxies.push(formatted);
+    logger.info(`Added proxy #${this.proxies.length}: ${formatted}`);
+    return `✅ Added proxy **#${this.proxies.length}**\n\`${this.maskProxy(formatted)}\``;
+  }
+
+  /**
+   * Removes a proxy by 0-based index.
+   * @param {number} index
+   * @returns {string} result message
+   */
+  removeProxy(index) {
+    if (index < 0 || index >= this.proxies.length) {
+      return `❌ Invalid index. Use \`/proxy list\` to see available proxies (1-${this.proxies.length}).`;
+    }
+    const removed = this.proxies.splice(index, 1)[0];
+    logger.info(`Removed proxy #${index + 1}: ${removed}`);
+    return `🗑️ Removed proxy **#${index + 1}**: \`${this.maskProxy(removed)}\`\n${this.proxies.length} proxy(ies) remaining.`;
+  }
+
+  /**
+   * Clears all proxies.
+   * @returns {string} result message
+   */
+  clearProxies() {
+    const count = this.proxies.length;
+    this.proxies = [];
+    logger.info(`Cleared all ${count} proxies`);
+    return `🗑️ Cleared **${count}** proxy(ies). Bots will connect directly until new proxies are added.`;
+  }
+
+  /**
+   * Masks sensitive parts of a proxy URL for display.
+   */
+  maskProxy(proxyUrl) {
+    try {
+      const parsed = new URL(proxyUrl);
+      const host = parsed.hostname;
+      const port = parsed.port;
+      // Mask last octet of IP and password
+      const maskedHost = host.replace(/\.\d+$/, '.***');
+      const maskedUser = parsed.username ? parsed.username.substring(0, 4) + '***' : '';
+      const maskedPass = parsed.password ? '****' : '';
+      if (maskedUser) {
+        return `${parsed.protocol}//${maskedUser}:${maskedPass}@${maskedHost}:${port}`;
+      }
+      return `${parsed.protocol}//${maskedHost}:${port}`;
+    } catch (_) {
+      // If not a valid URL, mask roughly
+      return proxyUrl.substring(0, 12) + '***';
+    }
+  }
+
+  /**
+   * Returns masked proxy list for safe display.
+   * @returns {string[]}
+   */
+  getProxiesMasked() {
+    return this.proxies.map(p => this.maskProxy(p));
   }
 
   /**

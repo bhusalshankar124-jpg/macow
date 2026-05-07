@@ -1482,6 +1482,7 @@ function setStatus(state, newStatus) {
 function getBotInfo(state) {
   var info = {
     account: state.accountName,
+    username: (state.bot && state.bot.username) ? state.bot.username : null,
     status: state.status,
     health: null,
     food: null,

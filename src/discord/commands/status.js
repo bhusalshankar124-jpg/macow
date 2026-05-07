@@ -36,12 +36,17 @@ module.exports = {
         reconnecting: '🟠',
       }[info.status] || '⚪';
 
+      // Show IGN alongside account label if available
+      const nameDisplay = info.username
+        ? `${info.account} (${info.username})`
+        : info.account;
+
       const pos = info.position
         ? `X: ${info.position.x} Y: ${info.position.y} Z: ${info.position.z}`
         : 'N/A';
 
       embed.addFields({
-        name: `${statusEmoji} ${info.account}`,
+        name: `${statusEmoji} ${nameDisplay}`,
         value: [
           `**Status:** ${info.status}`,
           `**Health:** ${info.health ?? 'N/A'} ❤️ | **Hunger:** ${info.food ?? 'N/A'} 🍗`,
